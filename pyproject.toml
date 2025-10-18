@@ -15,11 +15,10 @@ classifiers = [
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
 ]
@@ -30,9 +29,9 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.8"
+python = ">=3.10,<4"
 requests = ">=2.25.1"
-singer-sdk = ">=0.22.0,<1"
+singer-sdk = "~=0.50"
 google-cloud-bigquery = { version = ">=3.4.1,<4", extras = ["bqstorage"] }
 orjson = ">=3.7.2,<4"
 tenacity = ">=8.0.1,<9"
