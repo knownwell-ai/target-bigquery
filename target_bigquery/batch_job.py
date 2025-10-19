@@ -9,7 +9,7 @@
 # The above copyright notice and this permission notice shall be included in all copies or
 # substantial portions of the Software.
 """BigQuery Batch Job Sink."""
-
+import decimal
 import os
 from io import BytesIO
 from mmap import mmap
@@ -78,9 +78,7 @@ class BatchJobWorker(BaseWorker):
                     self.log_notifier.send(self.serialize_exception(exc))
             else:
                 self.job_notifier.send(True)
-                self.log_notifier.send(
-                    f"[{self.ext_id}] Loaded {len(job.data)} bytes into {job.table}."
-                )
+                self.log_notifier.send(f"[{self.ext_id}] Loaded {len(job.data)} bytes into {job.table}.")
             finally:
                 self.queue.task_done()  # type: ignore
 
@@ -118,17 +116,18 @@ class BigQueryBatchJobSink(BaseBigQuerySink):
         return cast(Type[BatchJobThreadWorker], Worker)
 
     def process_record(self, record: Dict[str, Any], context: Dict[str, Any]) -> None:
-        self.buffer.write(orjson.dumps(record, option=orjson.OPT_APPEND_NEWLINE))
+        def _default(obj):
+            if isinstance(obj, decimal.Decimal):
+                return str(obj)
+            raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+        self.buffer.write(orjson.dumps(record, option=orjson.OPT_APPEND_NEWLINE, default=_default))
 
     def process_batch(self, context: Dict[str, Any]) -> None:
         self.buffer.close()
         self.global_queue.put(
             Job(
-                data=(
-                    self.buffer.getvalue()
-                    if self.global_par_typ is ParType.PROCESS
-                    else self.buffer.getbuffer()
-                ),
+                data=(self.buffer.getvalue() if self.global_par_typ is ParType.PROCESS else self.buffer.getbuffer()),
                 table=self.table.as_ref(),
                 config=self.job_config,
             ),

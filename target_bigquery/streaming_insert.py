@@ -9,7 +9,7 @@
 # The above copyright notice and this permission notice shall be included in all copies or
 # substantial portions of the Software.
 """BigQuery Streaming Insert Sink."""
-
+import decimal
 import os
 from multiprocessing import Process
 from multiprocessing.dummy import Process as _Thread
@@ -58,14 +58,19 @@ class StreamingInsertWorker(BaseWorker):
             if job is None:
                 break
             try:
+
+                def _default(obj):
+                    if isinstance(obj, decimal.Decimal):
+                        return str(obj)
+                    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+                job_records = orjson.loads(orjson.dumps(job.records, default=_default))
                 _ = retry(
-                    retry=retry_if_exception_type(
-                        (ConnectionError, TimeoutError, NotFound, GatewayTimeout)
-                    ),
+                    retry=retry_if_exception_type((ConnectionError, TimeoutError, NotFound, GatewayTimeout)),
                     wait=wait_fixed(1),
                     stop=stop_after_delay(10),
                     reraise=True,
-                )(client.insert_rows_json)(table=job.table, json_rows=job.records)
+                )(client.insert_rows_json)(table=job.table, json_rows=job_records)
             except Exception as exc:
                 job.attempt += 1
                 if job.attempt > 3:
@@ -76,9 +81,7 @@ class StreamingInsertWorker(BaseWorker):
                     self.queue.put(job)
             else:
                 self.job_notifier.send(True)
-                self.log_notifier.send(
-                    f"[{self.ext_id}] Inserted {len(job.records)} records into {job.table}"
-                )
+                self.log_notifier.send(f"[{self.ext_id}] Inserted {len(job.records)} records into {job.table}")
             finally:
                 self.queue.task_done()  # type: ignore
 
@@ -97,9 +100,7 @@ class BigQueryStreamingInsertSink(BaseBigQuerySink):
     WORKER_CREATION_MIN_INTERVAL = 1.0
 
     @staticmethod
-    def worker_cls_factory(
-        worker_executor_cls: Type[Process], config: Dict[str, Any]
-    ) -> Type[
+    def worker_cls_factory(worker_executor_cls: Type[Process], config: Dict[str, Any]) -> Type[
         Union[
             StreamingInsertThreadWorker,
             StreamingInsertProcessWorker,
@@ -109,6 +110,7 @@ class BigQueryStreamingInsertSink(BaseBigQuerySink):
         return cast(Type[StreamingInsertThreadWorker], Worker)
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
+
         record = super().preprocess_record(record, context)
         record["data"] = orjson.dumps(record["data"]).decode("utf-8")
         return record
@@ -121,14 +123,10 @@ class BigQueryStreamingInsertSink(BaseBigQuerySink):
         self.records_to_drain.append(record)
 
     def process_batch(self, context: Dict[str, Any]) -> None:
-        self.global_queue.put(
-            Job(table=self.table.as_ref(), records=self.records_to_drain.copy())
-        )
+        self.global_queue.put(Job(table=self.table.as_ref(), records=self.records_to_drain.copy()))
         self.increment_jobs_enqueued()
         self.records_to_drain = []
 
 
-class BigQueryStreamingInsertDenormalizedSink(
-    Denormalized, BigQueryStreamingInsertSink
-):
+class BigQueryStreamingInsertDenormalizedSink(Denormalized, BigQueryStreamingInsertSink):
     pass
