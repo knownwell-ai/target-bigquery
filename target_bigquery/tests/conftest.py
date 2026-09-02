@@ -5,8 +5,10 @@ import os
 import pytest
 
 # Environment variables read by the tests marked ``integration`` (test_core.py and
-# test_sync.py). They point at a real BigQuery project and GCS bucket.
-INTEGRATION_ENV_VARS = ("BQ_CREDS", "BQ_PROJECT", "BQ_DATASET", "GCS_BUCKET")
+# test_sync.py). They point at a real BigQuery project and GCS bucket. Credentials
+# are deliberately not required: without ``BQ_CREDS`` the clients use Application
+# Default Credentials, which is how CI authenticates. See tests/config.py.
+INTEGRATION_ENV_VARS = ("BQ_PROJECT", "BQ_DATASET", "GCS_BUCKET")
 
 
 def pytest_collection_modifyitems(config, items):

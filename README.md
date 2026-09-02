@@ -213,11 +213,13 @@ Create tests within the `target_bigquery/tests` subfolder and then run:
 poetry run pytest
 ```
 
-The tests in `test_core.py` and `test_sync.py` load data into a real BigQuery project and are marked `integration`. They read the `BQ_CREDS`, `BQ_PROJECT`, `BQ_DATASET` and `GCS_BUCKET` environment variables and are skipped automatically when any of them is unset (see `target_bigquery/tests/conftest.py`). To run only the side-effect-free unit tests explicitly:
+The tests in `test_core.py` and `test_sync.py` load data into a real BigQuery project and are marked `integration`. They read the `BQ_PROJECT`, `BQ_DATASET` and `GCS_BUCKET` environment variables and are skipped automatically when any of them is unset (see `target_bigquery/tests/conftest.py`). To run only the side-effect-free unit tests explicitly:
 
 ```bash
 poetry run pytest -m "not integration"
 ```
+
+Credentials are optional. Set `BQ_CREDS` to a service-account JSON string to authenticate explicitly; with it unset, the BigQuery and GCS clients fall back to Application Default Credentials, which is how CI authenticates (see `target_bigquery/tests/config.py`).
 
 You can also test the `target-bigquery` CLI interface directly using `poetry run`:
 
@@ -229,14 +231,35 @@ poetry run target-bigquery --help
 
 Two [Cloud Build](https://cloud.google.com/build) configurations live at the repository root. Both build the project with [Google Cloud's buildpacks](https://cloud.google.com/docs/buildpacks/overview), which detect `poetry.lock` and install the locked dependencies with Poetry, so no tooling is installed by hand.
 
-- `cloudbuild.yaml` runs the unit tests (`pytest -m "not integration"`) inside the built image. Intended for a pull-request trigger.
+- `cloudbuild.yaml` runs the **full** test suite inside the built image, integration tests included. Intended for a pull-request trigger. The integration tests take no credentials: they use Application Default Credentials, so the build's own service account writes to BigQuery and GCS. Supply the three location substitutions below from the trigger; leave them unset and the integration tests skip, so a manual submit still runs the unit tests.
 - `cloudbuild-deploy.yaml` builds the sdist and wheel with `poetry build` and uploads them to a Python package repository. Intended for a trigger on version tags of the form `v<major>.<minor>.<patch>`; the build fails if the tag does not match the version in `pyproject.toml`.
 
-This is a public repository, so the configurations contain no organisation-specific values. The deploy configuration expects the trigger to supply one substitution:
+GitHub Actions (`.github/workflows/ci.yml`) runs only the unit tests (`pytest -m "not integration"`), so no BigQuery credentials are held as repository secrets.
 
-| Substitution | Meaning |
-|---|---|
-| `_PYTHON_REPOSITORY_URL` | Artifact Registry Python repository to upload to, e.g. `https://<location>-python.pkg.dev/<project>/<repository>/` |
+Note that the integration tests do not currently pass against `singer-sdk ~=0.50`: the SDK validates the post-transform record against `key_properties`, which the non-denormalized ingestion strategy has by then replaced with a single `data` column. `AGENTS.md` records the detail.
+
+This is a public repository, so the configurations contain no organisation-specific values. The triggers are expected to supply these substitutions:
+
+| Substitution | Config | Meaning |
+|---|---|---|
+| `_BQ_PROJECT` | `cloudbuild.yaml` | GCP project the integration tests load into |
+| `_BQ_DATASET` | `cloudbuild.yaml` | BigQuery dataset the integration tests write to |
+| `_GCS_BUCKET` | `cloudbuild.yaml` | GCS bucket used by the staging load method |
+| `_PYTHON_REPOSITORY_URL` | `cloudbuild-deploy.yaml` | Artifact Registry Python repository to upload to, e.g. `https://<location>-python.pkg.dev/<project>/<repository>/` |
+
+The integration tests pass no credentials, so the service account the pull-request trigger runs as is the identity that writes to BigQuery and GCS. It needs:
+
+| Role | Narrowest usable scope | Why |
+|---|---|---|
+| `roles/logging.logWriter` | project | Required of any user-specified build service account. If the build's logs go to a Cloud Storage bucket, object write on that bucket is needed too — a project-level `storage.objectUser` grant already covers it |
+| `roles/bigquery.jobUser` | project | `bigquery.jobs.create`, for the load jobs and the verification queries. Not grantable at dataset scope |
+| `roles/bigquery.dataEditor` | one dataset | Creates and writes the test tables: `tables.create`, `tables.updateData` (load jobs, streaming inserts and Storage Write API appends alike), `tables.getData`, and `tables.delete` for the temporary tables the merge and overwrite paths drop |
+| `roles/storage.objectUser` | the staging bucket | Writes the staged files, which BigQuery then reads back as the caller during the load job |
+| `roles/storage.bucketViewer` | the staging bucket | `storage.buckets.get`, which the staging sink calls on every sync |
+
+`dataEditor` has two workable shapes. Granted on one pre-created dataset it is the tighter option, but the dataset has to exist first, because `bigquery.datasets.create` is a project-level permission. Granted project-wide it carries `datasets.create`, so the suite creates the dataset itself on the first run — simpler to set up, at the cost of write access to every dataset in the project.
+
+The bucket must exist either way. `create_bucket_if_not_exists` in `gcs_stage.py` never creates anything, because `Client.get_bucket` raises `NotFound` rather than returning `None`, and the bucket's location must match the target's `location` option (default `US`) or the sink raises. Nothing deletes the staged files or the test tables afterwards, so a lifecycle rule on the bucket and a default table expiry on the dataset are worth setting — and note that a rule conditioned on non-live objects never matches a staged file, since nothing here writes a second version.
 
 To run either configuration by hand:
 

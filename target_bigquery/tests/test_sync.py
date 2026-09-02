@@ -10,6 +10,7 @@ from singer_sdk.testing import target_sync_test
 
 from target_bigquery.core import BigQueryCredentials, bigquery_client_factory
 from target_bigquery.target import TargetBigQuery
+from target_bigquery.tests.config import integration_target_config
 
 pytestmark = pytest.mark.integration
 
@@ -95,13 +96,7 @@ def test_basic_sync(method, batch_mode):
     singer_input.seek(0)
 
     target = TargetBigQuery(
-        config={
-            "credentials_json": os.environ["BQ_CREDS"],
-            "project": os.environ["BQ_PROJECT"],
-            "dataset": os.environ["BQ_DATASET"],
-            "bucket": os.environ["GCS_BUCKET"],
-            **OPTS,
-        },
+        config=integration_target_config(bucket=os.environ["GCS_BUCKET"], **OPTS),
     )
 
     # OVERRIDE CONSTANTS VARIABLES
@@ -111,7 +106,10 @@ def test_basic_sync(method, batch_mode):
     # target.get_sink_class().WORKER_CREATION_MIN_INTERVAL = 1
 
     client = bigquery_client_factory(
-        BigQueryCredentials(json=target.config["credentials_json"])
+        BigQueryCredentials(
+            json=target.config.get("credentials_json"),
+            project=target.config["project"],
+        )
     )
     stdout, stderr = target_sync_test(target, singer_input)
     del stdout, stderr
@@ -164,13 +162,7 @@ def test_basic_denorm_sync(method):
     singer_input.seek(0)
 
     target = TargetBigQuery(
-        config={
-            "credentials_json": os.environ["BQ_CREDS"],
-            "project": os.environ["BQ_PROJECT"],
-            "dataset": os.environ["BQ_DATASET"],
-            "bucket": os.environ["GCS_BUCKET"],
-            **OPTS,
-        },
+        config=integration_target_config(bucket=os.environ["GCS_BUCKET"], **OPTS),
     )
 
     # OVERRIDE CONSTANTS VARIABLES
@@ -180,7 +172,10 @@ def test_basic_denorm_sync(method):
     # target.get_sink_class().WORKER_CREATION_MIN_INTERVAL = 1
 
     client = bigquery_client_factory(
-        BigQueryCredentials(json=target.config["credentials_json"])
+        BigQueryCredentials(
+            json=target.config.get("credentials_json"),
+            project=target.config["project"],
+        )
     )
     stdout, stderr = target_sync_test(target, singer_input)
     del stdout, stderr
