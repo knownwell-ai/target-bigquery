@@ -11,6 +11,8 @@ from singer_sdk.testing import target_sync_test
 from target_bigquery.core import BigQueryCredentials, bigquery_client_factory
 from target_bigquery.target import TargetBigQuery
 
+pytestmark = pytest.mark.integration
+
 # id = (0-4) - normal case
 # id = 5 - datetime NULL case
 # id = 6 - datetime wrong format case

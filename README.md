@@ -1,8 +1,8 @@
 <h1 align="center">Target-BigQuery</h1>
 
 <p align="center">
-<a href="https://github.com/z3z1ma/target-bigquery/actions/"><img alt="Actions Status" src="https://github.com/z3z1ma/target-bigquery/actions/workflows/ci.yml/badge.svg"></a>
-<a href="https://github.com/z3z1ma/target-bigquery/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+<a href="https://github.com/knownwell-ai/target-bigquery/actions/"><img alt="Actions Status" src="https://github.com/knownwell-ai/target-bigquery/actions/workflows/ci.yml/badge.svg"></a>
+<a href="https://github.com/knownwell-ai/target-bigquery/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
 <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
 </p>
 
@@ -37,11 +37,16 @@ It is the most versatile target for BigQuery. Extremely performant, resource eff
 
 ## Installation 📈
 
-The package on pypi is named `z3-target-bigquery` but the executable it ships with is simply `target-bigquery`. This allows me to release work without concerns of naming conflicts on the package index.
+This repository is the Knownwell variant of [z3z1ma/target-bigquery](https://github.com/z3z1ma/target-bigquery). Following the Singer convention for alternate implementations, the package is published as `kw-target-bigquery` (upstream publishes `z3-target-bigquery`), while the executable it ships with is simply `target-bigquery`.
+
+The package is **not** published to PyPI. It is released to a private Artifact Registry Python repository (see [Continuous Integration](#continuous-integration-cloud-build)), so point pip at that index. Installing into an environment that already has `z3-target-bigquery` will leave both distributions owning the same `target_bigquery` package, so uninstall the old one first.
 
 ```bash
-# Use pipx or pip
-pipx install z3-target-bigquery
+# Authenticate pip against Artifact Registry (one-time, uses your gcloud credentials)
+pip install keyring keyrings.google-artifactregistry-auth
+# Use pipx or pip with the index the package is published to
+pipx install kw-target-bigquery \
+  --pip-args="--index-url https://<location>-python.pkg.dev/<project>/<repository>/simple/"
 # Verify it is installed
 target-bigquery --version
 ```
@@ -202,11 +207,16 @@ poetry install
 
 ### Create and Run Tests
 
-Create tests within the `target_bigquery/tests` subfolder and
-  then run:
+Create tests within the `target_bigquery/tests` subfolder and then run:
 
 ```bash
 poetry run pytest
+```
+
+The tests in `test_core.py` and `test_sync.py` load data into a real BigQuery project and are marked `integration`. They read the `BQ_CREDS`, `BQ_PROJECT`, `BQ_DATASET` and `GCS_BUCKET` environment variables and are skipped automatically when any of them is unset (see `target_bigquery/tests/conftest.py`). To run only the side-effect-free unit tests explicitly:
+
+```bash
+poetry run pytest -m "not integration"
 ```
 
 You can also test the `target-bigquery` CLI interface directly using `poetry run`:
@@ -214,6 +224,31 @@ You can also test the `target-bigquery` CLI interface directly using `poetry run
 ```bash
 poetry run target-bigquery --help
 ```
+
+### Continuous Integration (Cloud Build)
+
+Two [Cloud Build](https://cloud.google.com/build) configurations live at the repository root. Both build the project with [Google Cloud's buildpacks](https://cloud.google.com/docs/buildpacks/overview), which detect `poetry.lock` and install the locked dependencies with Poetry, so no tooling is installed by hand.
+
+- `cloudbuild.yaml` runs the unit tests (`pytest -m "not integration"`) inside the built image. Intended for a pull-request trigger.
+- `cloudbuild-deploy.yaml` builds the sdist and wheel with `poetry build` and uploads them to a Python package repository. Intended for a trigger on version tags of the form `v<major>.<minor>.<patch>`; the build fails if the tag does not match the version in `pyproject.toml`.
+
+This is a public repository, so the configurations contain no organisation-specific values. The deploy configuration expects the trigger to supply one substitution:
+
+| Substitution | Meaning |
+|---|---|
+| `_PYTHON_REPOSITORY_URL` | Artifact Registry Python repository to upload to, e.g. `https://<location>-python.pkg.dev/<project>/<repository>/` |
+
+To run either configuration by hand:
+
+```bash
+gcloud builds submit --config cloudbuild.yaml .
+gcloud builds submit --config cloudbuild-deploy.yaml \
+  --substitutions=_PYTHON_REPOSITORY_URL=https://<location>-python.pkg.dev/<project>/<repository>/ .
+```
+
+Because the repository is public, a pull-request trigger executes whatever the pull request contains. When creating the triggers: require comment control on the pull-request trigger (at least for external contributors), give the pull-request trigger a service account that can only write build logs, and reserve the service account with Artifact Registry write access for the tag trigger.
+
+The Python buildpack picks Poetry because `poetry.lock` is present. Do not add a `requirements.txt` at the repository root: the buildpack gives it precedence and would silently switch to pip.
 
 ### Testing with [Meltano](https://meltano.com/)
 

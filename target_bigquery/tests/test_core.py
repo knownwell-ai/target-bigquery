@@ -2,9 +2,12 @@
 
 import os
 
+import pytest
 from singer_sdk.testing import get_standard_target_tests
 
 from target_bigquery.target import TargetBigQuery
+
+pytestmark = pytest.mark.integration
 
 
 # Run standard built-in target tests from the SDK:
