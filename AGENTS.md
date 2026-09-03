@@ -48,7 +48,7 @@ poetry run pytest target_bigquery/tests/test_utils.py -k transform_column_name
 
 ## Code style
 
-- Formatter: black, line length 100, preview mode (`[tool.black]` in `pyproject.toml`). The locked black 21.12b0 crashes on import with current click; run a newer black via `pipx run black --line-length 100 target_bigquery` until the dev group is bumped.
+- Formatter: black, line length 100, preview mode (`[tool.black]` in `pyproject.toml`). The locked black 21.12b0 crashes on import with current click, and the tree was formatted with it, so **do not run a newer black over a whole file**: `pipx run black --line-length 100 --preview` reformats unrelated lines throughout (all five sink modules fail its `--check` at HEAD). Format the lines you changed by hand to match, then confirm black wants no further change to them with `pipx run black --line-length 100 --preview --diff <file>` and check that no `+`/`-` hunk touches your lines. Reformatting the tree is its own ticket, alongside bumping the dev group.
 - Imports: isort, profile black (`poetry run isort target_bigquery`).
 - Lint / types: `poetry run flake8 target_bigquery`, `poetry run mypy target_bigquery` (mypy 0.910; expect noise).
 - Poetry warns that the `[tool.poetry]` metadata tables are deprecated. Migrating to `[project]` is a known follow-up; do not do it as a side effect of another change, and re-lock if you do.
