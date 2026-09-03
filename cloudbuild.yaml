@@ -62,7 +62,7 @@ steps:
         export VIRTUAL_ENV="$$(dirname "$$(dirname "$$(command -v python)")")"
         poetry install --with dev --no-root
         python -m pytest target_bigquery/tests/test_core.py -p no:cacheprovider
-        python -m pytest target_bigquery/tests/test_utils.py target_bigquery/tests/test_config.py -p no:cacheprovider
+        python -m pytest target_bigquery/tests/test_utils.py target_bigquery/tests/test_config.py target_bigquery/tests/test_sinks.py -p no:cacheprovider
         python -m pytest target_bigquery/tests/test_sync.py -p no:cacheprovider
 
 substitutions:

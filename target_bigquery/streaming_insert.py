@@ -9,7 +9,6 @@
 # The above copyright notice and this permission notice shall be included in all copies or
 # substantial portions of the Software.
 """BigQuery Streaming Insert Sink."""
-import decimal
 import os
 from multiprocessing import Process
 from multiprocessing.dummy import Process as _Thread
@@ -26,6 +25,7 @@ from target_bigquery.core import (
     BaseWorker,
     Denormalized,
     bigquery_client_factory,
+    default_json_serializer,
 )
 
 
@@ -58,13 +58,9 @@ class StreamingInsertWorker(BaseWorker):
             if job is None:
                 break
             try:
-
-                def _default(obj):
-                    if isinstance(obj, decimal.Decimal):
-                        return str(obj)
-                    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
-
-                job_records = orjson.loads(orjson.dumps(job.records, default=_default))
+                job_records = orjson.loads(
+                    orjson.dumps(job.records, default=default_json_serializer)
+                )
                 _ = retry(
                     retry=retry_if_exception_type((ConnectionError, TimeoutError, NotFound, GatewayTimeout)),
                     wait=wait_fixed(1),
@@ -112,7 +108,9 @@ class BigQueryStreamingInsertSink(BaseBigQuerySink):
     def preprocess_record(self, record: dict, context: dict) -> dict:
 
         record = super().preprocess_record(record, context)
-        record["data"] = orjson.dumps(record["data"]).decode("utf-8")
+        record["data"] = orjson.dumps(record["data"], default=default_json_serializer).decode(
+            "utf-8"
+        )
         return record
 
     @property

@@ -9,6 +9,7 @@
 # The above copyright notice and this permission notice shall be included in all copies or
 # substantial portions of the Software.
 import datetime
+import decimal
 import gzip
 import json
 import mmap
@@ -314,8 +315,14 @@ class BaseBigQuerySink(BatchSink):
         }
         self.table = BigQueryTable(name=self.table_name, **self.table_opts)
 
-        # apply transformations to key_properties
-        self._key_properties = [transform_column_name(kp, **self.table.transforms) for kp in self.key_properties]
+        # Column name transforms only apply to the denormalized strategy, which writes the
+        # tap's fields as real columns and whose merge SQL then has to match those names.
+        # A fixed schema stores the record verbatim inside `data`, so its key properties
+        # keep the names the tap sent.
+        if self.apply_transforms:
+            self._key_properties = [
+                transform_column_name(kp, **self.table.transforms) for kp in self.key_properties
+            ]
         created = self.create_target()
         if not created:
             self.update_schema()
@@ -435,8 +442,24 @@ class BaseBigQuerySink(BatchSink):
     def _validate_and_parse(self, record: dict) -> dict:
         return record
 
+    def _singer_validate_message(self, record: Dict[str, Any]) -> None:
+        """Validate a preprocessed record against the stream's key properties.
+
+        The SDK runs this check after `preprocess_record`. A denormalized sink still has
+        the tap's fields at the top level by then, so the inherited check reads them
+        correctly. A fixed-schema sink has moved them into `data` and already validated
+        them in `preprocess_record`, so there is nothing left to check here.
+        """
+        if self.ingestion_strategy is IngestionStrategy.DENORMALIZED:
+            super()._singer_validate_message(record)
+
     def preprocess_record(self, record: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Preprocess a record before writing it to the sink."""
+        # The SDK checks key properties only after this method returns (`target_base.py`),
+        # by which point they are nested inside `data` -- and two sinks have serialized
+        # that to a JSON string, where a membership test would match substrings instead
+        # of keys. Check here, while the record still has the shape the tap sent it in.
+        super()._singer_validate_message(record)
         metadata = {
             k: record.pop(k, None)
             for k in (
@@ -1039,6 +1062,19 @@ def bigquery_type(property_type: List[str], property_format: Optional[str] = Non
         return "record"
     else:
         return "string"
+
+
+def default_json_serializer(obj: Any) -> str:
+    """orjson ``default=`` handler for values orjson itself cannot encode.
+
+    singer-sdk deserializes every JSON ``number`` as a ``decimal.Decimal``
+    (``singer_sdk/singerlib/json.py``), so any stream with a numeric field reaches the
+    sinks carrying Decimals. ``str`` keeps the value exactly as the tap sent it, where a
+    float would round it.
+    """
+    if isinstance(obj, decimal.Decimal):
+        return str(obj)
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
 # Column name transforms are configurable and entirely opt-in.
