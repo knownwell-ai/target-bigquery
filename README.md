@@ -39,14 +39,14 @@ It is the most versatile target for BigQuery. Extremely performant, resource eff
 
 This repository is the Knownwell variant of [z3z1ma/target-bigquery](https://github.com/z3z1ma/target-bigquery). Following the Singer convention for alternate implementations, the package is published as `kw-target-bigquery` (upstream publishes `z3-target-bigquery`), while the executable it ships with is simply `target-bigquery`.
 
-The package is **not** published to PyPI. It is released to a private Artifact Registry Python repository (see [Continuous Integration](#continuous-integration-cloud-build)), so point pip at that index. Installing into an environment that already has `z3-target-bigquery` will leave both distributions owning the same `target_bigquery` package, so uninstall the old one first.
+The package is **not** published to PyPI. It is released to a private Artifact Registry Python repository (see [Continuous Integration](#continuous-integration-cloud-build)), so add that index **alongside** PyPI with `--extra-index-url`. That repository holds only Knownwell's own packages, so `--index-url` would replace PyPI and leave `singer-sdk`, `google-cloud-bigquery` and the rest unresolvable. Installing into an environment that already has `z3-target-bigquery` will leave both distributions owning the same `target_bigquery` package, so uninstall the old one first.
 
 ```bash
 # Authenticate pip against Artifact Registry (one-time, uses your gcloud credentials)
 pip install keyring keyrings.google-artifactregistry-auth
-# Use pipx or pip with the index the package is published to
+# Install with the private index added to pip's sources, PyPI included
 pipx install kw-target-bigquery \
-  --pip-args="--index-url https://<location>-python.pkg.dev/<project>/<repository>/simple/"
+  --pip-args="--extra-index-url https://<location>-python.pkg.dev/<project>/<repository>/simple/"
 # Verify it is installed
 target-bigquery --version
 ```
