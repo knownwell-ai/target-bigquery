@@ -32,6 +32,7 @@ from typing import (
 
 import orjson
 from google.cloud.bigquery_storage_v1 import BigQueryWriteClient, types, writer
+from google.cloud.bigquery_storage_v1.exceptions import StreamClosedError
 from google.protobuf import json_format, message
 from proto import Field
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -45,6 +46,7 @@ from target_bigquery.core import (
     BaseBigQuerySink,
     BaseWorker,
     Denormalized,
+    default_json_serializer,
     storage_client_factory,
 )
 from target_bigquery.proto_gen import proto_schema_factory_v2
@@ -57,6 +59,27 @@ MAX_IN_FLIGHT = 15
 
 Dispatcher = Callable[[types.AppendRowsRequest], writer.AppendRowsFuture]
 StreamComponents = Tuple[Field, writer.AppendRowsStream, Dispatcher]
+
+
+def close_write_stream(stream: writer.AppendRowsStream) -> None:
+    """Close an append-rows stream, tolerating one that is not open.
+
+    `AppendRowsStream.close` calls itself idempotent but raises `StreamClosedError`
+    unless the stream is currently active -- which covers both a stream that was already
+    closed and one that was created but never sent to. Either is the state a caller
+    wants before finalizing, so neither is an error.
+
+    This matters at end of pipe: `drain_all` poison-pills and *joins* the workers, and
+    each worker closes every stream it cached on the way out, before any sink's
+    `clean_up` runs. The stream `commit_streams` is about to finalize is therefore
+    always closed already, and closing it unguarded raised before
+    `finalize_write_stream`, so the PENDING streams were never committed and their rows
+    were lost.
+    """
+    try:
+        stream.close()
+    except StreamClosedError:
+        pass
 
 
 def get_application_stream(client: BigQueryWriteClient, job: "Job") -> StreamComponents:
@@ -317,7 +340,9 @@ class BigQueryStorageWriteSink(BaseBigQuerySink):
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
-        record["data"] = orjson.dumps(record["data"]).decode("utf-8")
+        record["data"] = orjson.dumps(record["data"], default=default_json_serializer).decode(
+            "utf-8"
+        )
         return record
 
     def process_record(self, record: Dict[str, Any], context: Dict[str, Any]) -> None:
@@ -355,7 +380,7 @@ class BigQueryStorageWriteSink(BaseBigQuerySink):
         if self.open_streams:
             committer = storage_client_factory(self._credentials)
             for name, stream in self.open_streams:
-                stream.close()
+                close_write_stream(stream)
                 committer.finalize_write_stream(name=name)
             write = committer.batch_commit_write_streams(
                 types.BatchCommitWriteStreamsRequest(
