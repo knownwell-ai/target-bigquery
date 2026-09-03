@@ -231,23 +231,21 @@ poetry run target-bigquery --help
 
 Two [Cloud Build](https://cloud.google.com/build) configurations live at the repository root. Both build the project with [Google Cloud's buildpacks](https://cloud.google.com/docs/buildpacks/overview), which detect `poetry.lock` and install the locked dependencies with Poetry, so no tooling is installed by hand.
 
-- `cloudbuild.yaml` runs the **full** test suite inside the built image, integration tests included. Intended for a pull-request trigger. The integration tests take no credentials: they use Application Default Credentials, so the build's own service account writes to BigQuery and GCS. Supply the three location substitutions below from the trigger; leave them unset and the integration tests skip, so a manual submit still runs the unit tests.
-- `cloudbuild-deploy.yaml` builds the sdist and wheel with `poetry build` and uploads them to a Python package repository. Intended for a trigger on version tags of the form `v<major>.<minor>.<patch>`; the build fails if the tag does not match the version in `pyproject.toml`.
+- `cloudbuild-deploy.yaml` runs the **full** test suite inside the built image, integration tests included. Intended for a trigger on pushes to `main` — **not** on pull requests, because the integration tests need write credentials and a pull request can change the code this config runs. The tests take no credentials of their own: they use Application Default Credentials, so the build's own service account writes to BigQuery and GCS. Supply the three location substitutions below from the trigger; leave them unset and the integration tests skip, so a manual submit still runs the unit tests.
+- `cloudbuild-release.yaml` builds the sdist and wheel with `poetry build` and uploads them to a Python package repository. Intended for a trigger on version tags of the form `v<major>.<minor>.<patch>`; the build fails if the tag does not match the version in `pyproject.toml`.
 
-GitHub Actions (`.github/workflows/ci.yml`) runs only the unit tests (`pytest -m "not integration"`), so no BigQuery credentials are held as repository secrets.
-
-Note that the integration tests do not currently pass against `singer-sdk ~=0.50`: the SDK validates the post-transform record against `key_properties`, which the non-denormalized ingestion strategy has by then replaced with a single `data` column. `AGENTS.md` records the detail.
+GitHub Actions (`.github/workflows/ci.yml`) runs only the unit tests (`pytest -m "not integration"`), holds no credentials, and is the only check that runs on a pull request.
 
 This is a public repository, so the configurations contain no organisation-specific values. The triggers are expected to supply these substitutions:
 
 | Substitution | Config | Meaning |
 |---|---|---|
-| `_BQ_PROJECT` | `cloudbuild.yaml` | GCP project the integration tests load into |
-| `_BQ_DATASET` | `cloudbuild.yaml` | BigQuery dataset the integration tests write to |
-| `_GCS_BUCKET` | `cloudbuild.yaml` | GCS bucket used by the staging load method |
-| `_PYTHON_REPOSITORY_URL` | `cloudbuild-deploy.yaml` | Artifact Registry Python repository to upload to, e.g. `https://<location>-python.pkg.dev/<project>/<repository>/` |
+| `_BQ_PROJECT` | `cloudbuild-deploy.yaml` | GCP project the integration tests load into |
+| `_BQ_DATASET` | `cloudbuild-deploy.yaml` | BigQuery dataset the integration tests write to |
+| `_GCS_BUCKET` | `cloudbuild-deploy.yaml` | GCS bucket used by the staging load method |
+| `_PYTHON_REPOSITORY_URL` | `cloudbuild-release.yaml` | Artifact Registry Python repository to upload to, e.g. `https://<location>-python.pkg.dev/<project>/<repository>/` |
 
-The integration tests pass no credentials, so the service account the pull-request trigger runs as is the identity that writes to BigQuery and GCS. It needs:
+The integration tests pass no credentials, so the service account the merge-to-main trigger runs as is the identity that writes to BigQuery and GCS. It needs:
 
 | Role | Narrowest usable scope | Why |
 |---|---|---|
@@ -264,12 +262,12 @@ The bucket must exist either way. `create_bucket_if_not_exists` in `gcs_stage.py
 To run either configuration by hand:
 
 ```bash
-gcloud builds submit --config cloudbuild.yaml .
-gcloud builds submit --config cloudbuild-deploy.yaml \
+gcloud builds submit --config cloudbuild-deploy.yaml .
+gcloud builds submit --config cloudbuild-release.yaml \
   --substitutions=_PYTHON_REPOSITORY_URL=https://<location>-python.pkg.dev/<project>/<repository>/ .
 ```
 
-Because the repository is public, a pull-request trigger executes whatever the pull request contains. When creating the triggers: require comment control on the pull-request trigger (at least for external contributors), give the pull-request trigger a service account that can only write build logs, and reserve the service account with Artifact Registry write access for the tag trigger.
+Because the repository is public, a pull-request trigger would execute whatever the pull request contains — including changes to the Cloud Build config and the test code it runs. There is therefore **no Cloud Build trigger on pull requests at all**: pull requests are checked by GitHub Actions, which runs only the side-effect-free tests and holds no credentials. Every Cloud Build trigger fires on a trusted ref instead, where code arrives only by merge or tag: `cloudbuild-deploy.yaml` on pushes to `main` with the BigQuery and Storage service account, and `cloudbuild-release.yaml` on version tags with the Artifact Registry one. Keep those two identities separate, and do not add a pull-request trigger that carries either.
 
 The Python buildpack picks Poetry because `poetry.lock` is present. Do not add a `requirements.txt` at the repository root: the buildpack gives it precedence and would silently switch to pip.
 

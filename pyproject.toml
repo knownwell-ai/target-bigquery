@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kw-target-bigquery"
-version = "0.7.2"
+version = "0.7.3"
 description = "kw-target-bigquery is the Knownwell variant of z3-target-bigquery, a Singer target for BigQuery. It supports storage write, GCS, streaming, and batch load methods. Built with the Meltano SDK."
 authors = ["Alex Butler <butler.alex2010@gmail.com>"]
 keywords = ["ELT", "BigQuery"]

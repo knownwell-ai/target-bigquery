@@ -1,8 +1,10 @@
 name: Tests
 
-# Runs the side-effect-free unit tests only. The integration tests need a real
-# BigQuery project and GCS bucket and run in Cloud Build (cloudbuild.yaml), which
-# authenticates as a service account instead of holding credentials as secrets.
+# Runs the side-effect-free unit tests only, and is the ONLY check on a pull
+# request. The integration tests need a real BigQuery project and GCS bucket, so they
+# run in Cloud Build (cloudbuild-deploy.yaml) on merge to main instead: that build
+# holds write credentials, and a pull request can change the code it would run.
+# This workflow deliberately holds no credentials of any kind.
 
 on:
   pull_request:
