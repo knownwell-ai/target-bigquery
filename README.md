@@ -1,8 +1,8 @@
 <h1 align="center">Target-BigQuery</h1>
 
 <p align="center">
-<a href="https://github.com/z3z1ma/target-bigquery/actions/"><img alt="Actions Status" src="https://github.com/z3z1ma/target-bigquery/actions/workflows/ci.yml/badge.svg"></a>
-<a href="https://github.com/z3z1ma/target-bigquery/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+<a href="https://github.com/knownwell-ai/target-bigquery/actions/"><img alt="Actions Status" src="https://github.com/knownwell-ai/target-bigquery/actions/workflows/ci.yml/badge.svg"></a>
+<a href="https://github.com/knownwell-ai/target-bigquery/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
 <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
 </p>
 
@@ -37,11 +37,16 @@ It is the most versatile target for BigQuery. Extremely performant, resource eff
 
 ## Installation 📈
 
-The package on pypi is named `z3-target-bigquery` but the executable it ships with is simply `target-bigquery`. This allows me to release work without concerns of naming conflicts on the package index.
+This repository is the Knownwell variant of [z3z1ma/target-bigquery](https://github.com/z3z1ma/target-bigquery). Following the Singer convention for alternate implementations, the package is published as `kw-target-bigquery` (upstream publishes `z3-target-bigquery`), while the executable it ships with is simply `target-bigquery`.
+
+The package is **not** published to PyPI. It is released to a private Artifact Registry Python repository (see [Continuous Integration](#continuous-integration-cloud-build)), so add that index **alongside** PyPI with `--extra-index-url`. That repository holds only Knownwell's own packages, so `--index-url` would replace PyPI and leave `singer-sdk`, `google-cloud-bigquery` and the rest unresolvable. Installing into an environment that already has `z3-target-bigquery` will leave both distributions owning the same `target_bigquery` package, so uninstall the old one first.
 
 ```bash
-# Use pipx or pip
-pipx install z3-target-bigquery
+# Authenticate pip against Artifact Registry (one-time, uses your gcloud credentials)
+pip install keyring keyrings.google-artifactregistry-auth
+# Install with the private index added to pip's sources, PyPI included
+pipx install kw-target-bigquery \
+  --pip-args="--extra-index-url https://<location>-python.pkg.dev/<project>/<repository>/simple/"
 # Verify it is installed
 target-bigquery --version
 ```
@@ -202,18 +207,69 @@ poetry install
 
 ### Create and Run Tests
 
-Create tests within the `target_bigquery/tests` subfolder and
-  then run:
+Create tests within the `target_bigquery/tests` subfolder and then run:
 
 ```bash
 poetry run pytest
 ```
+
+The tests in `test_core.py` and `test_sync.py` load data into a real BigQuery project and are marked `integration`. They read the `BQ_PROJECT`, `BQ_DATASET` and `GCS_BUCKET` environment variables and are skipped automatically when any of them is unset (see `target_bigquery/tests/conftest.py`). To run only the side-effect-free unit tests explicitly:
+
+```bash
+poetry run pytest -m "not integration"
+```
+
+Credentials are optional. Set `BQ_CREDS` to a service-account JSON string to authenticate explicitly; with it unset, the BigQuery and GCS clients fall back to Application Default Credentials, which is how CI authenticates (see `target_bigquery/tests/config.py`).
 
 You can also test the `target-bigquery` CLI interface directly using `poetry run`:
 
 ```bash
 poetry run target-bigquery --help
 ```
+
+### Continuous Integration (Cloud Build)
+
+Two [Cloud Build](https://cloud.google.com/build) configurations live at the repository root. Both build the project with [Google Cloud's buildpacks](https://cloud.google.com/docs/buildpacks/overview), which detect `poetry.lock` and install the locked dependencies with Poetry, so no tooling is installed by hand.
+
+- `cloudbuild-deploy.yaml` runs the **full** test suite inside the built image, integration tests included. Intended for a trigger on pushes to `main` — **not** on pull requests, because the integration tests need write credentials and a pull request can change the code this config runs. The tests take no credentials of their own: they use Application Default Credentials, so the build's own service account writes to BigQuery and GCS. Supply the three location substitutions below from the trigger; leave them unset and the integration tests skip, so a manual submit still runs the unit tests.
+- `cloudbuild-release.yaml` builds the sdist and wheel with `poetry build` and uploads them to a Python package repository. Intended for a trigger on version tags of the form `v<major>.<minor>.<patch>`; the build fails if the tag does not match the version in `pyproject.toml`.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs only the unit tests (`pytest -m "not integration"`), holds no credentials, and is the only check that runs on a pull request.
+
+This is a public repository, so the configurations contain no organisation-specific values. The triggers are expected to supply these substitutions:
+
+| Substitution | Config | Meaning |
+|---|---|---|
+| `_BQ_PROJECT` | `cloudbuild-deploy.yaml` | GCP project the integration tests load into |
+| `_BQ_DATASET` | `cloudbuild-deploy.yaml` | BigQuery dataset the integration tests write to |
+| `_GCS_BUCKET` | `cloudbuild-deploy.yaml` | GCS bucket used by the staging load method |
+| `_PYTHON_REPOSITORY_URL` | `cloudbuild-release.yaml` | Artifact Registry Python repository to upload to, e.g. `https://<location>-python.pkg.dev/<project>/<repository>/` |
+
+The integration tests pass no credentials, so the service account the merge-to-main trigger runs as is the identity that writes to BigQuery and GCS. It needs:
+
+| Role | Narrowest usable scope | Why |
+|---|---|---|
+| `roles/logging.logWriter` | project | Required of any user-specified build service account. If the build's logs go to a Cloud Storage bucket, object write on that bucket is needed too — a project-level `storage.objectUser` grant already covers it |
+| `roles/bigquery.jobUser` | project | `bigquery.jobs.create`, for the load jobs and the verification queries. Not grantable at dataset scope |
+| `roles/bigquery.dataEditor` | one dataset | Creates and writes the test tables: `tables.create`, `tables.updateData` (load jobs, streaming inserts and Storage Write API appends alike), `tables.getData`, and `tables.delete` for the temporary tables the merge and overwrite paths drop |
+| `roles/storage.objectUser` | the staging bucket | Writes the staged files, which BigQuery then reads back as the caller during the load job |
+| `roles/storage.bucketViewer` | the staging bucket | `storage.buckets.get`, which the staging sink calls on every sync |
+
+`dataEditor` has two workable shapes. Granted on one pre-created dataset it is the tighter option, but the dataset has to exist first, because `bigquery.datasets.create` is a project-level permission. Granted project-wide it carries `datasets.create`, so the suite creates the dataset itself on the first run — simpler to set up, at the cost of write access to every dataset in the project.
+
+The bucket must exist either way. `create_bucket_if_not_exists` in `gcs_stage.py` never creates anything, because `Client.get_bucket` raises `NotFound` rather than returning `None`, and the bucket's location must match the target's `location` option (default `US`) or the sink raises. Nothing deletes the staged files or the test tables afterwards, so a lifecycle rule on the bucket and a default table expiry on the dataset are worth setting — and note that a rule conditioned on non-live objects never matches a staged file, since nothing here writes a second version.
+
+To run either configuration by hand:
+
+```bash
+gcloud builds submit --config cloudbuild-deploy.yaml .
+gcloud builds submit --config cloudbuild-release.yaml \
+  --substitutions=_PYTHON_REPOSITORY_URL=https://<location>-python.pkg.dev/<project>/<repository>/ .
+```
+
+Because the repository is public, a pull-request trigger would execute whatever the pull request contains — including changes to the Cloud Build config and the test code it runs. There is therefore **no Cloud Build trigger on pull requests at all**: pull requests are checked by GitHub Actions, which runs only the side-effect-free tests and holds no credentials. Every Cloud Build trigger fires on a trusted ref instead, where code arrives only by merge or tag: `cloudbuild-deploy.yaml` on pushes to `main` with the BigQuery and Storage service account, and `cloudbuild-release.yaml` on version tags with the Artifact Registry one. Keep those two identities separate, and do not add a pull-request trigger that carries either.
+
+The Python buildpack picks Poetry because `poetry.lock` is present. Do not add a `requirements.txt` at the repository root: the buildpack gives it precedence and would silently switch to pip.
 
 ### Testing with [Meltano](https://meltano.com/)
 

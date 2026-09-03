@@ -9,7 +9,6 @@
 # The above copyright notice and this permission notice shall be included in all copies or
 # substantial portions of the Software.
 """BigQuery Batch Job Sink."""
-import decimal
 import os
 from io import BytesIO
 from mmap import mmap
@@ -28,6 +27,7 @@ from target_bigquery.core import (
     Denormalized,
     ParType,
     bigquery_client_factory,
+    default_json_serializer,
 )
 
 
@@ -116,12 +116,9 @@ class BigQueryBatchJobSink(BaseBigQuerySink):
         return cast(Type[BatchJobThreadWorker], Worker)
 
     def process_record(self, record: Dict[str, Any], context: Dict[str, Any]) -> None:
-        def _default(obj):
-            if isinstance(obj, decimal.Decimal):
-                return str(obj)
-            raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
-
-        self.buffer.write(orjson.dumps(record, option=orjson.OPT_APPEND_NEWLINE, default=_default))
+        self.buffer.write(
+            orjson.dumps(record, option=orjson.OPT_APPEND_NEWLINE, default=default_json_serializer)
+        )
 
     def process_batch(self, context: Dict[str, Any]) -> None:
         self.buffer.close()

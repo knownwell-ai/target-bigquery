@@ -1,5 +1,11 @@
 name: Tests
 
+# Runs the side-effect-free unit tests only, and is the ONLY check on a pull
+# request. The integration tests need a real BigQuery project and GCS bucket, so they
+# run in Cloud Build (cloudbuild-deploy.yaml) on merge to main instead: that build
+# holds write credentials, and a pull request can change the code it would run.
+# This workflow deliberately holds no credentials of any kind.
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -28,30 +34,18 @@ jobs:
   build:
     strategy:
       matrix:
-        py_version: ["3.8", "3.9", "3.10"]
+        py_version: ["3.13"]
     runs-on: ubuntu-latest
-    env:
-      PYTHON_VERSION: ${{ matrix.py_version }}
-      BQ_PROJECT: ${{ secrets.BQ_PROJECT }}
-      BQ_DATASET: ${{ secrets.BQ_DATASET }}
-      BQ_CREDS: ${{ secrets.BQ_CREDS }}
-      GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Setup Python ${{ matrix.py_version }}
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.py_version }}
       - name: Install Target Bigquery
         run: |
           python -m pip install --upgrade pip poetry
           poetry install
-      - name: Run SDK Tests
+      - name: Run unit tests
         run: |
-          poetry run pytest -k test_core
-      - name: Run Bigquery Unit Tests
-        run: |
-          poetry run pytest -k test_utils
-      - name: Run Bigquery Integration Tests
-        run: |
-          poetry run pytest -k test_sync
+          poetry run pytest -m "not integration"

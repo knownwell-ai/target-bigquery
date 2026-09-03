@@ -34,6 +34,7 @@ from target_bigquery.core import (
     Denormalized,
     ParType,
     bigquery_client_factory,
+    default_json_serializer,
     gcs_client_factory,
 )
 
@@ -167,7 +168,9 @@ class BigQueryGcsStagingSink(BaseBigQuerySink):
         }
 
     def process_record(self, record: Dict[str, Any], context: Dict[str, Any]) -> None:
-        self.buffer.write(orjson.dumps(record, option=orjson.OPT_APPEND_NEWLINE))
+        self.buffer.write(
+            orjson.dumps(record, option=orjson.OPT_APPEND_NEWLINE, default=default_json_serializer)
+        )
 
     def process_batch(self, context: Dict[str, Any]) -> None:
         self.buffer.close()

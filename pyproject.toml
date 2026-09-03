@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "z3-target-bigquery"
-version = "0.7.2"
-description = "z3-target-bigquery is a Singer target for BigQuery. It supports storage write, GCS, streaming, and batch load methods. Built with the Meltano SDK."
+name = "kw-target-bigquery"
+version = "0.7.3"
+description = "kw-target-bigquery is the Knownwell variant of z3-target-bigquery, a Singer target for BigQuery. It supports storage write, GCS, streaming, and batch load methods. Built with the Meltano SDK."
 authors = ["Alex Butler <butler.alex2010@gmail.com>"]
 keywords = ["ELT", "BigQuery"]
 license = "MIT"
 include = ["target_bigquery/*.py", "README.md", "LICENSE"]
-homepage = "https://github.com/z3z1ma/target-bigquery"
-repository = "https://github.com/z3z1ma/target-bigquery"
+homepage = "https://github.com/knownwell-ai/target-bigquery"
+repository = "https://github.com/knownwell-ai/target-bigquery"
 readme = "README.md"
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -59,6 +59,12 @@ color_output = true
 line_length = 100
 profile = "black"
 src_paths = "target_bigquery"
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+markers = [
+  "integration: needs a real BigQuery project and GCS bucket; skipped automatically when the credential environment variables are unset (see target_bigquery/tests/conftest.py)",
+]
 
 [build-system]
 requires = ["poetry-core>=1.0.8"]
